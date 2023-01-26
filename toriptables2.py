@@ -1,5 +1,6 @@
-#! /usr/bin/env python2
+#! /usr/bin/env python3
 # Written by Rupe version 2.1
+# Updated by Lorenzo Calza
 #
 """
 Tor Iptables script is an anonymizer
@@ -8,15 +9,16 @@ and traffic including DNS through the tor network.
 """
 
 from __future__ import print_function
-from commands import getoutput
+from subprocess import check_output
 from subprocess import call, check_call, CalledProcessError
 from os.path import isfile, basename
-from os import devnull
+from os import devnull, getuid
 from sys import exit, stdout, stderr
 from atexit import register
 from argparse import ArgumentParser
 from json import load
-from urllib2 import urlopen, URLError
+from urllib.request import urlopen
+from urllib.error import URLError
 from time import sleep
 
 
@@ -28,7 +30,7 @@ class TorIptables(object):
     self.local_loopback = "127.0.0.1" # Local loopback
     self.non_tor_net = ["192.168.0.0/16", "172.16.0.0/12"]
     self.non_tor = ["127.0.0.0/9", "127.128.0.0/10", "127.0.0.0/8"]
-    self.tor_uid = getoutput("id -ur debian-tor")  # Tor user uid
+    self.tor_uid = check_output(["id", "-ur", args.tor_user]).decode("UTF-8").strip()  # Tor user uid
     self.trans_port = "9040"  # Tor port
     self.tor_config_file = '/etc/tor/torrc'
     self.torrc = r'''
@@ -54,10 +56,11 @@ DNSPort %s
       fnull = open(devnull, 'w')
       try:
         tor_restart = check_call(
-            ["service", "tor", "restart"],
+#            ["service", "tor", "restart"], # systemctl instead of service
+          ["systemctl", "restart", "tor.service"],
               stdout=fnull, stderr=fnull)
 
-        if tor_restart is 0:
+        if tor_restart == 0:
           print(" {0}".format(
               "[\033[92m+\033[0m] Anonymizer status \033[92m[ON]\033[0m"))
           self.get_ip()
@@ -111,7 +114,7 @@ DNSPort %s
         break
     print
     if not my_public_ip:
-      my_public_ip = getoutput('wget -qO - ifconfig.me')
+      my_public_ip = check_output(['wget', '-qO', '-', 'ifconfig.me'])
     if not my_public_ip:
       exit(" \033[91m[!]\033[0m Can't get public ip address!")
     print(" {0}".format("[\033[92m+\033[0m] Your IP is \033[92m%s\033[0m" % my_public_ip))
@@ -137,8 +140,16 @@ if __name__ == '__main__':
                       '--ip',
                       action='store_true',
                       help='This option will output the current public IP address')
+  parser.add_argument('-u',
+                      '--tor-user',
+                      action='store',
+                      default='debian-tor',
+                      help='Tor user to search for (default: debian-tor)')
   args = parser.parse_args()
 
+  if getuid() != 0:
+    exit(" \033[91m[!]\033[0m you must be root!")
+    
   try:
     load_tables = TorIptables()
     if isfile(load_tables.tor_config_file):
@@ -155,9 +166,9 @@ if __name__ == '__main__':
     elif args.ip:
       load_tables.get_ip()
     elif args.refresh:
-      call(['kill', '-HUP', '%s' % getoutput('pidof tor')])
+      call(['kill', '-HUP', '%s' % check_output(['pidof', 'tor'])])
       load_tables.get_ip()
     else:
       parser.print_help()
   except Exception as err:
-    print("[!] Run as super user: %s" % err[1])
+    exit(" \033[91m[!]\033[0m you must be root!")
